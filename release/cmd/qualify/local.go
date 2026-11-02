@@ -147,6 +147,16 @@ func runLocal(ctx context.Context, out io.Writer, o localOptions) error {
 		}
 		o.runDir = filepath.Join(cache, "nvke", "qualify-local", time.Now().Format("20060102-150405")+"-"+o.stream)
 	}
+	// The lane steps run from the repository root, not from where this was
+	// started, so a relative path would name a different file to them.
+	if o.runDir, err = filepath.Abs(o.runDir); err != nil {
+		return err
+	}
+	if o.plan != "" {
+		if o.plan, err = filepath.Abs(o.plan); err != nil {
+			return err
+		}
+	}
 	if err := os.MkdirAll(o.runDir, 0o700); err != nil {
 		return err
 	}

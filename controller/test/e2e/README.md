@@ -828,10 +828,44 @@ The node is torn down afterwards (tenants are deleted first). `-e2e.keep-site`, 
 keeps every tenant as well, passed or not, and skips the spec that deletes one;
 `qualify local --keep-tenant` sets it, and the workflow never does.
 
-Prerequisites: a way to reach the jump host (below), the jump host in
-`FORGE_JUMP_HOST` (read by `environments/forge.yaml`) and `FORGE_API_KEY`.
-Neither the proxy nor the jump host is checked in; secrets are read only from
-the environment.
+Prerequisites, all read from the shell that runs the suite. Neither the proxy
+nor the jump host nor any identifier is checked in, and secrets are read only
+from the environment; the lane's maintainers can give you the values.
+
+- **A Teleport login** to the cluster the jump host is enrolled in, current for
+  the whole run: a `full` run takes over an hour, and its teardown still dials
+  the node. See [Reaching the jump host](#reaching-the-jump-host).
+- **The Forge site.** The suite reads the API key, and `environments/forge.yaml`
+  reads the rest. An unset one of these fails the run before a machine exists:
+
+  | Name | What it is |
+  |---|---|
+  | `FORGE_API_KEY` | The Forge API key. Secret. |
+  | `FORGE_ORG_ID` | The org the machines are created in |
+  | `FORGE_SITE_ID`, `FORGE_VPC_ID`, `FORGE_SUBNET_ID` | Site-1, and the VPC and subnet its machines attach to |
+  | `FORGE_SSH_KEY_GROUP_ID` | Site-1's key group, for serial console access |
+  | `FORGE_INSTANCE_TYPE_CPU_ID`, `FORGE_INSTANCE_TYPE_GPU_ID` | Site-1's CPU and GPU (L40S) machine types |
+
+  These default to empty, and a site run stops on an empty jump host:
+
+  | Name | What it is |
+  |---|---|
+  | `FORGE_JUMP_HOST` | The jump host in front of site-1's machines |
+  | `FORGE_TELEPORT_LOGIN` | Your login on it, one of the Logins `tsh status` lists. Empty is tsh's default. |
+
+  A GB200 stream runs at site-2, which is skipped unless all of its
+  `FORGE_SITE_2_*` names in `environments/forge.yaml` are set.
+- **A registry login** for what `site-inputs` pulls: capi-provisioned always,
+  and the controller or nvkectl when they are not built. GHCR is the default,
+  and its packages are private, so `docker login ghcr.io` with a token that
+  can read them; NVCR is below.
+- **The versions** `-e2e.versions` names. `qualify plan`, run from the
+  repository root, resolves them the way a qualification run does (see
+  [Running one](../../../docs/qualification/overview.md#running-one)):
+
+  ```bash
+  go run ./release/cmd/qualify plan --subject nvke --scope l40s --output plan.json
+  ```
 
 **On DSX** (`-e2e.environment=dsx`) the credential is different and the stage
 is limited. Each datahall carries its own SSA client, named for the key it is
@@ -869,11 +903,15 @@ go test -timeout 5h . -args \
   -e2e.config=e2e-config.yaml -e2e.environment=dsx -e2e.site-stage=provision \
   -e2e.capabilities=arch=amd64 \
   -e2e.versions=controller=<…>,os-image=<amd64 url>,os-image-bootloader=<amd64 url>,…
-``` Build the inputs, then run; with the `site-inputs` defaults
-no `site:` block is needed at all:
+```
+
+**On Forge** (`-e2e.environment=forge`), build the inputs, then run. With the
+`site-inputs` defaults no `site:` block is needed at all, and
+`SITE_PROVISIONED_VERSION` has to be the same capi-provisioned version as
+`-e2e.versions` names:
 
 ```bash
-gmake site-inputs SITE_NVKE_CONTROLLER_VERSION=$(git rev-parse --short=12 HEAD)
+gmake site-inputs SITE_NVKE_CONTROLLER_VERSION=$(git rev-parse --short=12 HEAD) SITE_PROVISIONED_VERSION=<version>
 go test -timeout 5h . -args \
   -ginkgo.label-filter="site-controller && !nico-dsx" -ginkgo.v \
   -e2e.config=e2e-config.yaml -e2e.environment=forge -e2e.site-stage=full \

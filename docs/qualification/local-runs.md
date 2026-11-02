@@ -25,9 +25,10 @@ locally, instead of pushing and waiting on CI for each try. `--keep-site` and
 With `--from-source` it builds every image the site needs from the checkout
 and pulls none, so it needs no registry credential at all.
 
-[hardware-lane.md](hardware-lane.md) says what each step of the lane does and
-why; this page says how to run it from a workstation and where that differs
-from CI.
+[hardware-lane.md](hardware-lane.md) is the operator's guide, and
+[hardware-lane-design.md](hardware-lane-design.md) says what each step of the
+lane does and why. This page is the reference for `qualify local`: every flag,
+every variable, and where it differs from CI.
 
 ## How it stays the same run as CI
 

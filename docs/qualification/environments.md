@@ -10,8 +10,8 @@ one, asks it for a machine with certain capabilities, and gets back an instance
 type the site actually offers.
 
 Read this before adding a site, adding an instance type, or adding a second
-provider. [hardware-lane.md](hardware-lane.md) covers what happens after a
-machine is chosen.
+provider. [hardware-lane-design.md](hardware-lane-design.md) covers what
+happens after a machine is chosen.
 
 Files live in `controller/test/e2e/environments/`, one per environment, named
 by the value of `-e2e.environment`. There are two: `forge.yaml`, and `dsx.yaml`

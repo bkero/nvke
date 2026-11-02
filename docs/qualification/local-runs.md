@@ -259,6 +259,154 @@ instance would leak.
   upstream remote's branches and tags. A clone that has also fetched forks
   would otherwise describe a digit longer and name artifacts nobody published.
 
+## Compared with running the suite directly
+
+`qualify local` is a wrapper around running the e2e suite directly: its last
+step is the same `go test` invocation, with CI's flags. The difference is
+everything around that command. Use `qualify local` when you want a result
+that is comparable to CI's, and run the suite directly when you need control
+over what it runs, to debug a spec or develop the suite.
+
+| Step | `qualify local` | `go test` directly |
+|---|---|---|
+| Choose versions | `qualify plan`, or `--plan`, `--version` or `--overrides` | you write the `-e2e.versions` string |
+| Choose the machine | the stream's capabilities, from the plan | you write `-e2e.capabilities` |
+| Checks before a machine is taken | the tools are on `PATH`, the plan's inputs are set, `tsh status`, and every artifact the plan names is published, the OS image included (asked through the jump host) | none; a missing artifact or a lapsed login fails partway through, with a machine already taken |
+| Build what the node needs | the lane's `resolve`, `controller-image` and `site-inputs` steps: the controller and capi-provisioned archives, the profiles, and nvkectl for the node's architecture | you build each archive and nvkectl, and put them where the config points |
+| E2E config | written by the lane's `config` step | you write it: the nvkectl binary, the image archives and repositories, `deployPathRef`, the lifecycle |
+| Environment and tenants | from the stream's provider, with the other provider's tenant entries excluded | you pick `-e2e.environment`, and a label filter that excludes the other provider's tenant |
+| Suite flags | CI's: label `site-controller`, `-timeout 220m`, `-ginkgo.timeout=150m`, the JUnit and JSON reports | whatever you pass |
+| Ctrl-C | the first one reaches Ginkgo once, so its teardown runs | depends on how you start it; a second Ctrl-C reaching Ginkgo skips its cleanup and leaks the instance |
+| After the run | withhold (the jump hosts and the token issuer are scrubbed from the outputs), collect into the run directory, `plan-as-run.json`, `qualify-result.json` | the raw outputs in `controller/test/e2e/`, nothing scrubbed, nothing recorded |
+
+Running the suite directly can do what `qualify local` does not:
+
+- **Any label filter,** so one spec or a few rather than the lane's whole
+  `site-controller` set.
+- **Any flags and stage,** including the tenant specs against a site
+  controller that already exists, which never dials the jump host.
+- **Fast iteration:** keep a site with `-e2e.keep-site`, change the test code,
+  and run again against it, without a new plan or new archives.
+- **A debugger:** the test binary under `dlv`, or with more Ginkgo verbosity.
+
+`qualify local` gives what running the suite directly does not:
+
+- **A result comparable to CI's:** the same steps, in the same order, from the
+  same script. A pass from running the suite directly says only that the specs
+  you chose passed at the versions you picked.
+- **Failing before a machine is taken,** rather than twenty to forty minutes
+  in.
+- **A record:** `plan-as-run.json` names what was built from your checkout,
+  and `qualify-result.json` holds the result, so the run can be attached to a
+  pull request or published.
+- **Files you can share,** because of the withhold step.
+
+Both need a Forge API key, a Teleport login and, unless every image is built,
+registry access, and both run against Forge or DSX only. One way to use them
+together: develop and debug against a kept site by running the suite directly,
+then confirm with `qualify local` before asking for review.
+
+## What a run executes
+
+An L40S `full` run built from source, given a plan it does not have to make:
+
+```bash
+go run ./release/cmd/qualify local --plan <plan.json> --stream forge-l40s-amd64-ubuntu-24.04-kube-1.36 --stage full --from-source
+```
+
+runs the equivalent of the commands below. `$LANE` is
+`controller/test/e2e/hack/qualify-lane.sh` and `$RUN` the new run directory.
+The versions are an example; `<commit>` is `HEAD`, abbreviated to 12.
+
+```bash
+# 1. Preflight, in-process.
+#    bash, jq, git, make, docker and tsh are on PATH.
+#    The upstream remote is the one whose URL names dsx-ai-factory/nvke.
+#    With --plan, nothing is fetched or planned. Without it, this runs first:
+#      git fetch --quiet --tags <upstream remote>
+#      qualify plan --subject nvke --scope full --version <version> --root . --output $RUN/plan.json
+mkdir -m 700 $RUN
+
+# 2. The Teleport login must be current before anything reaches the jump host.
+tsh status
+
+# 3. Verify, in-process, with qualify verify's checker. Built components are
+#    not pulled, so only the OS images are checked, and the CDN is asked
+#    through the jump host because it refuses workstations.
+
+# 4. The lane steps. Each is `bash $LANE <step>`, with the shell's
+#    environment plus what earlier steps wrote to $RUN/lane.env.
+bash $LANE stream-env <plan.json> <combination> forge-l40s-amd64-ubuntu-24.04-kube-1.36
+#    -> PROVIDER=forge ARCH=amd64 GPU=l40s KUBERNETES_VERSION=1.36.3
+#       CNI_OVN_VERSION=2.4.2, and the plan's component versions
+
+#    --from-source empties the three built versions; empty is what the
+#    resolve step reads as "build it":
+#    SITE_NVKE_CONTROLLER_VERSION=  CLI_VERSION=  CAPI_PROVISIONED_VERSION=
+
+bash $LANE resolve
+#    -> SITE_NVKE_CONTROLLER_BUILD=1 SITE_PROVISIONED_BUILD=1 SITE_CLI_BUILD=1,
+#       each named <commit>; SITE_IMAGES=localhost/nvke SITE_ENVIRONMENT=forge
+#       SITE_TENANT_EXCLUDE=nico-dsx CAPABILITIES=arch=amd64,gpu=l40s
+
+bash $LANE controller-image
+#    -> SITE_NVKE_CONTROLLER_REPOSITORY=nvke-controller
+
+bash $LANE site-inputs
+#    which runs
+make -C controller/test/e2e site-inputs SITE_NVKE_CONTROLLER_VERSION=<commit> SITE_NVKE_CONTROLLER_BUILD=1 SITE_NVKE_CONTROLLER_REPOSITORY=nvke-controller SITE_ARCH=amd64 SITE_CLI_BUILD=1 SITE_CLI_VERSION=<commit> SITE_IMAGE_REGISTRY=localhost/nvke SITE_PROVISIONED_VERSION=<commit> SITE_PROVISIONED_BUILD=1 SITE_INPUTS=$RUN/site-inputs
+#    -> $RUN/site-inputs/controller.tar, capi-provisioned.tar, profiles.tar,
+#       and cli/dist/nvkectl-linux-amd64
+
+bash $LANE config
+#    -> $RUN/e2e-config.yaml
+
+bash $LANE run
+#    in its own process group, so one Ctrl-C reaches Ginkgo; it runs
+go test -v -timeout 220m . -args -ginkgo.label-filter="site-controller && !nico-dsx" -ginkgo.timeout=150m -ginkgo.v -ginkgo.fail-on-empty -ginkgo.no-color -ginkgo.junit-report=qualify-e2e.junit.xml -ginkgo.json-report=qualify-e2e.report.json -e2e.config=$RUN/e2e-config.yaml -e2e.environment=forge -e2e.site-stage=full -e2e.versions="controller=<commit>,cli=<commit>,capi-provisioned=<commit>,os-image-bootloader-amd64=<url>,os-image-amd64=<url>,...,kube=1.36.3,cni-ovn=2.4.2,..." -e2e.capabilities=arch=amd64,gpu=l40s
+
+bash $LANE withhold
+#    scrubs the jump hosts and the token issuer from the log, the reports
+#    and the diagnostics
+bash $LANE artifacts
+#    lists what the suite wrote in controller/test/e2e/, which is moved to $RUN
+
+# 5. The record, in-process.
+#    $RUN/plan-as-run.json: the plan, with the built components named <commit>
+#    qualify result, from plan-as-run.json and the JUnit report, writes
+#    $RUN/qualify-result.json
+```
+
+The config step writes:
+
+```yaml
+node:
+  user: ""
+nvkectl:
+  binary: cli/dist/nvkectl-linux-amd64
+site:
+  deployPathRef: ""
+  images:
+    controller:
+      repository: localhost/nvke/nvke-controller
+      archive: <run dir>/site-inputs/controller.tar
+    capi-provisioned:
+      repository: localhost/nvke/cluster-api-provider-provisioned
+      archive: <run dir>/site-inputs/capi-provisioned.tar
+    profiles:
+      repository: nke-e2e-profiles
+      tag: local
+      archive: <run dir>/site-inputs/profiles.tar
+```
+
+Without `--from-source`, the resolve step keeps the plan's published versions,
+and `make site-inputs` pulls those images, with `SITE_*_BUILD=0` and the
+registry `--registry` names, instead of building them. The Forge API key and
+the site ids never appear in these commands: the suite reads them from the
+environment, through `environments/forge.yaml`. The workflow runs the same
+`$LANE` steps; it differs in using a `tbot` identity instead of `tsh status`,
+and in running `qualify verify` and `qualify result` as steps of their own.
+
 ## Known limits
 
 - Two runs from one checkout at once collide: the suite writes its log and

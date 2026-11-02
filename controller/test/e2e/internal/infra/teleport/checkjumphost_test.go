@@ -14,11 +14,11 @@ import (
 
 // fakeTSH writes a tsh that records its arguments and exits with code,
 // printing stderr first.
-func fakeTSH(t *testing.T, code int, stderr string) (binary, argsFile string) {
+func fakeTSH(t *testing.T, code int, stderr string) (string, string) {
 	t.Helper()
 	dir := t.TempDir()
-	argsFile = filepath.Join(dir, "args")
-	binary = filepath.Join(dir, "tsh")
+	argsFile := filepath.Join(dir, "args")
+	binary := filepath.Join(dir, "tsh")
 	script := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > '%s'\nprintf '%%s' '%s' >&2\nexit %d\n", argsFile, stderr, code)
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

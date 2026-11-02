@@ -33,7 +33,7 @@ func TestLoadAcceptsShippedConfigs(t *testing.T) {
 // step and loads what it wrote.
 func TestLoadAcceptsTheGeneratedSiteConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "e2e-config.yaml")
-	cmd := exec.Command("bash", "../../hack/qualify-lane.sh", "config")
+	cmd := exec.CommandContext(t.Context(), "bash", "../../hack/qualify-lane.sh", "config")
 	cmd.Env = append(os.Environ(),
 		"LANE_ENV=/dev/null",
 		"E2E_CONFIG="+path,

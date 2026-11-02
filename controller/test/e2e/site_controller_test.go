@@ -671,8 +671,8 @@ func newForgeProvider(cfg config.Config, env *environment.Environment) (infra.Pr
 			return nil, jerr
 		}
 	}
-	if err := dialer.CheckJumpHost(context.Background(), forgeSite.JumpHost); err != nil {
-		return nil, err
+	if cerr := dialer.CheckJumpHost(context.Background(), forgeSite.JumpHost); cerr != nil {
+		return nil, cerr
 	}
 
 	versions, err := requireVersions(versionKube, versionCNIOVN, versionNerdctl, versionKind, versionClusterctl)
@@ -758,8 +758,8 @@ func newDSXProvider(cfg config.Config, env *environment.Environment) (infra.Prov
 			return nil, jerr
 		}
 	}
-	if err := dialer.CheckJumpHost(context.Background(), dsxSite.JumpHost); err != nil {
-		return nil, err
+	if cerr := dialer.CheckJumpHost(context.Background(), dsxSite.JumpHost); cerr != nil {
+		return nil, cerr
 	}
 
 	versions, err := requireVersions(versionKube, versionCNIOVN, versionNerdctl, versionKind, versionClusterctl)

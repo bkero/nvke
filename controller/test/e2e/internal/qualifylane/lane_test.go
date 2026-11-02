@@ -29,11 +29,11 @@ func shells(t *testing.T) []string {
 		if err != nil {
 			continue
 		}
-		real, err := filepath.EvalSymlinks(path)
-		if err != nil || seen[real] {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err != nil || seen[resolved] {
 			continue
 		}
-		seen[real] = true
+		seen[resolved] = true
 		out = append(out, path)
 	}
 	if len(out) == 0 {
@@ -47,7 +47,7 @@ func shells(t *testing.T) []string {
 
 func git(t *testing.T, args ...string) string {
 	t.Helper()
-	out, err := exec.Command("git", args...).Output()
+	out, err := exec.CommandContext(t.Context(), "git", args...).Output()
 	if err != nil {
 		t.Fatalf("git %v: %v", args, err)
 	}
@@ -79,6 +79,7 @@ type lane struct {
 }
 
 func newLane(t *testing.T, shell string, env map[string]string) *lane {
+	t.Helper()
 	l := &lane{t: t, shell: shell, file: filepath.Join(t.TempDir(), "lane.env"), env: map[string]string{
 		"QUALIFY_E2E_SITE_CONTROLLER_VERSION": "",
 		"SITE_STAGE":                          "full",
@@ -130,7 +131,7 @@ func (l *lane) set(k, v string) {
 // the step's outcome is not the one wanted.
 func (l *lane) step(wantOK bool, args ...string) string {
 	l.t.Helper()
-	cmd := exec.Command(l.shell, append([]string{script}, args...)...)
+	cmd := exec.CommandContext(l.t.Context(), l.shell, append([]string{script}, args...)...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH"), "HOME=" + os.Getenv("HOME"), "LANE_ENV=" + l.file}
 	for k, v := range l.env {
 		cmd.Env = append(cmd.Env, k+"="+v)
@@ -145,7 +146,7 @@ func (l *lane) step(wantOK bool, args ...string) string {
 	return string(out)
 }
 
-func expect(t *testing.T, got map[string]string, want map[string]string) {
+func expect(t *testing.T, got, want map[string]string) {
 	t.Helper()
 	for k, v := range want {
 		if got[k] != v {
@@ -198,7 +199,7 @@ func TestStreamEnvRefusesAStreamThePlanLacks(t *testing.T) {
 func TestMatrixHasOneEntryPerStream(t *testing.T) {
 	p := plan(t)
 	for _, sh := range shells(t) {
-		out, err := exec.Command(sh, script, "matrix", p).Output()
+		out, err := exec.CommandContext(t.Context(), sh, script, "matrix", p).Output()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -312,10 +313,18 @@ func TestResolveRefuses(t *testing.T) {
 		{"an image without its bootloader", "dsx-cpu-arm64", nil, nil, "go together"},
 		{"nvcr without an NGC key", "forge-l40s-amd64", map[string]string{"NGC_API_KEY": ""}, nil, "NGC_API_KEY"},
 		{"an unknown registry", "forge-l40s-amd64", map[string]string{"SITE_IMAGE_REGISTRY": "quay"}, nil, "is not ghcr, nvcr or local"},
-		{"local with an image to pull", "forge-l40s-amd64", map[string]string{"SITE_IMAGE_REGISTRY": "local"},
-			map[string]string{"SITE_NVKE_CONTROLLER_VERSION": "", "CLI_VERSION": ""}, "capi-provisioned would be pulled"},
-		{"a workflow plan naming no capi-provisioned", "forge-l40s-amd64", map[string]string{"GITHUB_ACTIONS": "true"},
-			map[string]string{"CAPI_PROVISIONED_VERSION": ""}, "the plan names no capi-provisioned version"},
+		{
+			"local with an image to pull", "forge-l40s-amd64",
+			map[string]string{"SITE_IMAGE_REGISTRY": "local"},
+			map[string]string{"SITE_NVKE_CONTROLLER_VERSION": "", "CLI_VERSION": ""},
+			"capi-provisioned would be pulled",
+		},
+		{
+			"a workflow plan naming no capi-provisioned", "forge-l40s-amd64",
+			map[string]string{"GITHUB_ACTIONS": "true"},
+			map[string]string{"CAPI_PROVISIONED_VERSION": ""},
+			"the plan names no capi-provisioned version",
+		},
 		{"a value with a line break", "forge-l40s-amd64", map[string]string{"QUALIFY_E2E_NGC_ORG": "example-org\nBASH_ENV=/tmp/x"}, nil, "has a line break in its value"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -402,7 +411,7 @@ func TestAStepReadsNothingPastTheDispatch(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, sh := range shells(t) {
-		out, err := exec.Command(sh, copied, "matrix", p).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), sh, copied, "matrix", p).CombinedOutput()
 		if err != nil || strings.Contains(string(out), "not-a-step-command") {
 			t.Errorf("%s matrix ran past the dispatch: err = %v\n%s", sh, err, out)
 		}
